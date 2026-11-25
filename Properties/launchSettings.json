@@ -2,9 +2,9 @@
   "profiles": {
     "OrdersApi": {
       "commandName": "Project",
-      "applicationUrl": "http://localhost:5080",
+      "applicationUrl": "http://localhost:5070",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Production"
+        "ASPNETCORE_ENVIRONMENT": "Development"
       }
     }
   }

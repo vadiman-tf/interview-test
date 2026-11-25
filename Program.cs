@@ -1,3 +1,4 @@
+using System.Text.Json.Serialization;
 using Microsoft.EntityFrameworkCore;
 using OrdersApi.Data;
 using OrdersApi.Models;
@@ -5,12 +6,13 @@ using OrdersApi.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
-builder.Services.AddControllers();
-builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddControllers()
+    .AddJsonOptions(o => o.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
 
 builder.Services.AddDbContext<AppDbContext>(o => o.UseInMemoryDatabase("orders"));
-builder.Services.AddScoped<OrderRepository>();
-builder.Services.AddSingleton<OrderService>();
+builder.Services.AddScoped<IOrderRepository, OrderRepository>();
+builder.Services.AddScoped<OrderService>();
+builder.Services.AddSingleton<NotificationService>();
 
 var app = builder.Build();
 
@@ -25,22 +27,18 @@ static void SeedData(WebApplication app)
     var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
     if (db.Customers.Any()) return;
 
-    var rnd = new Random(1);
-    for (var c = 1; c <= 5; c++)
+    db.Customers.AddRange(
+        new Customer { Id = 1, Name = "Alice", Email = "alice@example.com", Type = "regular" },
+        new Customer { Id = 2, Name = "Bob",   Email = "bob@example.com",   Type = "Gold" },
+        new Customer { Id = 3, Name = "Carol", Email = "carol@example.com", Type = "vip" });
+
+    db.Orders.Add(new Order
     {
-        db.Customers.Add(new Customer { Id = c, Name = $"Customer {c}" });
-        for (var o = 0; o < 10; o++)
-        {
-            db.Orders.Add(new Order
-            {
-                CustomerId = c,
-                CreatedUtc = DateTime.UtcNow.AddDays(-rnd.Next(0, 14)),
-                Lines = new List<OrderLine>
-                {
-                    new() { Product = "Widget", Price = 9.99m, Quantity = rnd.Next(1, 5) }
-                }
-            });
-        }
-    }
+        CustomerId = 1,
+        CreatedUtc = DateTime.UtcNow.AddDays(-2),
+        Status = "new",
+        Total = 29.97,
+        Lines = new List<OrderLine> { new() { Product = "Widget", Price = 9.99, Quantity = 3 } }
+    });
     db.SaveChanges();
 }

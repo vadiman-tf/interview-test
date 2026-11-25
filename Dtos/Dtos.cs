@@ -1,40 +1,22 @@
-using OrdersApi.Models;
-
 namespace OrdersApi.Dtos;
 
-public class OrderDto
+public class CreateOrderRequest
 {
-    public int Id { get; set; }
     public int CustomerId { get; set; }
-    public DateTime CreatedUtc { get; set; }
-    public List<OrderLineDto> Lines { get; set; } = new();
-
-    public OrderDto() { }
-
-    public OrderDto(Order order)
-    {
-        Id = order.Id;
-        CustomerId = order.CustomerId;
-        CreatedUtc = order.CreatedUtc;
-    }
+    public List<OrderLineRequest> Lines { get; set; } = new();
 }
 
-public class OrderLineDto
+public class OrderLineRequest
 {
     public string Product { get; set; } = "";
-    public decimal Price { get; set; }
+    public double Price { get; set; }
     public int Quantity { get; set; }
-
-    public OrderLine ToEntity() => new OrderLine
-    {
-        Product = Product,
-        Price = Price,
-        Quantity = Quantity
-    };
 }
 
-public class ReportDto
+public class OrderSummaryDto
 {
-    public int TotalOrders { get; set; }
-    public decimal TotalRevenue { get; set; }
+    public int Id { get; set; }
+    public string Status { get; set; } = "";
+    public double Total { get; set; }
+    public int LineCount { get; set; }
 }

@@ -1,5 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.EntityFrameworkCore;
+using OrdersApi.Data;
 using OrdersApi.Dtos;
+using OrdersApi.Models;
 using OrdersApi.Services;
 
 namespace OrdersApi.Controllers;
@@ -9,33 +12,60 @@ namespace OrdersApi.Controllers;
 public class OrdersController : ControllerBase
 {
     private readonly OrderService _service;
-    public OrdersController(OrderService service) => _service = service;
+    private readonly AppDbContext _db;
 
-    [HttpGet("recent")]
-    public async Task<IReadOnlyList<OrderDto>> GetRecent()
+    public OrdersController(OrderService service, AppDbContext db)
     {
-        return await _service.GetRecentAsync();
+        _service = service;
+        _db = db;
     }
 
-    [HttpGet("totals")]
-    public async Task<int[]> GetTotals([FromQuery] int[] customerIds)
+    [HttpGet("{id}")]
+    public Order Get(int id)
     {
-        return await _service.GetTotalsAsync(customerIds);
+        return _db.Orders
+            .Include(o => o.Customer)
+            .Include(o => o.Lines)
+            .First(o => o.Id == id);
     }
 
-    [HttpGet("report")]
-    public async Task<IActionResult> GetReport()
+    [HttpGet("customer/{customerId}")]
+    public async Task<List<OrderSummaryDto>> GetForCustomer(int customerId)
     {
-        var report = await Task.Run(() => _service.BuildReport());
-        return Ok(report);
+        return await _service.GetCustomerOrders(customerId);
     }
 
     [HttpPost]
-    public async Task<IActionResult> Create(OrderDto dto, CancellationToken ct)
+    public async Task<IActionResult> Create(CreateOrderRequest request)
     {
-        var id = await _service.CreateAsync(dto, ct);
-        _ = _service.SendConfirmationAsync(id);
+        try
+        {
+            var order = await _service.CreateOrder(request, true, true);
+            return Ok(order);
+        }
+        catch (Exception ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
 
-        return Ok(id);
+    [HttpPost("{id}/cancel")]
+    public async Task<IActionResult> Cancel(int id)
+    {
+        var ok = await _service.CancelOrder(id);
+        return ok ? Ok() : BadRequest();
+    }
+
+    [HttpPost("{id}/ship")]
+    public async Task<IActionResult> Ship(int id)
+    {
+        var ok = await _service.ShipOrder(id);
+        return ok ? Ok() : BadRequest();
+    }
+
+    [HttpGet("stats")]
+    public IActionResult Stats()
+    {
+        return Ok(new { ordersCreated = OrderService.OrdersCreated });
     }
 }

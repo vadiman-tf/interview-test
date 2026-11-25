@@ -1,67 +1,135 @@
-using System.Collections.Concurrent;
 using Microsoft.EntityFrameworkCore;
 using OrdersApi.Data;
 using OrdersApi.Dtos;
+using OrdersApi.Models;
 
 namespace OrdersApi.Services;
 
 public class OrderService
 {
-    private readonly AppDbContext _db;
-    private static readonly ConcurrentDictionary<int, OrderDto> _cache = new();
+    private readonly IOrderRepository _repo;
+    private readonly IServiceProvider _provider;
 
-    public OrderService(AppDbContext db)
+    public static int OrdersCreated;
+
+    public OrderService(IOrderRepository repo, IServiceProvider provider)
     {
-        _db = db;
+        _repo = repo;
+        _provider = provider;
     }
 
-    public async Task<IReadOnlyList<OrderDto>> GetRecentAsync()
+    public async Task<Order> CreateOrder(CreateOrderRequest request, bool sendEmail, bool applyDiscount)
     {
-        var all = await _db.Orders.ToListAsync();
-        return all.Where(o => o.CreatedUtc > DateTime.Now.AddDays(-7))
-                  .OrderByDescending(o => o.CreatedUtc)
-                  .Select(o => new OrderDto(o))
-                  .ToList();
-    }
+        var customers = await _repo.GetCustomersAsync();
+        var customer = customers.FirstOrDefault(c => c.Id == request.CustomerId);
+        if (customer == null)
+            throw new Exception("Customer not found");
 
-    public async Task<int[]> GetTotalsAsync(int[] customerIds)
-    {
-        var tasks = customerIds.Select(id =>
-            _db.Orders.Where(o => o.CustomerId == id).CountAsync());
-        return await Task.WhenAll(tasks);
-    }
-
-    public async Task<int> CreateAsync(OrderDto dto, CancellationToken ct)
-    {
-        foreach (var line in dto.Lines)
+        var order = new Order
         {
-            _db.OrderLines.Add(line.ToEntity());
-            await _db.SaveChangesAsync(ct);
+            CustomerId = customer.Id,
+            CreatedUtc = DateTime.Now,
+            Status = "new"
+        };
+
+        double total = 0;
+        foreach (var line in request.Lines)
+        {
+            if (line.Quantity > 0)
+            {
+                if (line.Price > 0)
+                {
+                    if (!string.IsNullOrEmpty(line.Product))
+                    {
+                        order.Lines.Add(new OrderLine
+                        {
+                            Product = line.Product,
+                            Price = line.Price,
+                            Quantity = line.Quantity
+                        });
+                        total += line.Price * line.Quantity;
+                    }
+                }
+            }
         }
-        return dto.Id;
+
+        if (applyDiscount)
+            total = total - total * DiscountCalculator.Instance.Calculate(customer, total);
+
+        order.Total = total;
+
+        await _repo.AddAsync(order);
+        await _repo.SaveAsync();
+        OrdersCreated++;
+
+        if (sendEmail)
+        {
+            var notifier = (NotificationService)_provider.GetService(typeof(NotificationService))!;
+            notifier.SendOrderConfirmation(order);
+        }
+
+        Console.WriteLine("Order created: " + order.Id + ", discount: " + DiscountCalculator.Instance.LastDiscount);
+        return order;
     }
 
-    public async Task SendConfirmationAsync(int orderId)
+    public async Task<List<OrderSummaryDto>> GetCustomerOrders(int customerId)
     {
-        using var client = new HttpClient();
+        var orders = await _repo.Query().ToListAsync();
+        var result = new List<OrderSummaryDto>();
+
+        foreach (var o in orders.Where(x => x.CustomerId == customerId))
+        {
+            var lineCount = _repo.Query()
+                .Where(x => x.Id == o.Id)
+                .SelectMany(x => x.Lines)
+                .Count();
+
+            result.Add(new OrderSummaryDto
+            {
+                Id = o.Id,
+                Status = o.Status,
+                Total = o.Total,
+                LineCount = lineCount
+            });
+        }
+        return result;
+    }
+
+    public async Task<bool> CancelOrder(int id)
+    {
         try
         {
-            await client.GetAsync($"http://localhost:9/confirm/{orderId}");
+            var order = _repo.GetById(id);
+            if (order!.Status == "shipped")
+                throw new InvalidOperationException("Shipped order cannot be cancelled");
+
+            order.Status = "cancelled";
+            await _repo.SaveAsync();
+            return true;
         }
         catch (Exception ex)
         {
-            throw ex;
+            Console.WriteLine(ex.Message);
+            return false;
         }
     }
 
-    public ReportDto BuildReport()
+    public async Task<bool> ShipOrder(int id)
     {
-        var orders = _db.Orders.ToList();
-        var lines = _db.OrderLines.ToList();
-        return new ReportDto
+        try
         {
-            TotalOrders = orders.Count,
-            TotalRevenue = lines.Sum(l => l.Price * l.Quantity)
-        };
+            var order = _repo.GetById(id);
+            if (order!.Status == "cancelled")
+                throw new InvalidOperationException("Cancelled order cannot be shipped");
+
+            order.Status = "shipped";
+            await _repo.SaveAsync();
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine(ex.Message);
+            return false;
+        }
     }
 }
